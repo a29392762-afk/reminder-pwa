@@ -26,8 +26,8 @@
       <button @click="resetAll" class="px-4 py-2 rounded-xl bg-gray-200 font-bold">清空全部</button>
     </div>
 
-    <!-- 推播：不顯示狀態，只保留按鈕 -->
-    <div class="mb-6">
+    <!-- 通知按鈕：已啟用就不顯示 -->
+    <div class="mb-6" v-if="showEnablePush">
       <button @click="enablePush"
         class="w-full px-4 py-3 rounded-2xl font-black bg-pink-600 text-white">
         啟用通知
@@ -92,23 +92,26 @@
         class="rounded-2xl border p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
         :class="cardClass(r)">
 
-        <div class="flex-1">
-          <div class="text-lg font-black text-gray-800">{{ r.title }}</div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xl font-black text-gray-800 break-words">{{ r.title }}</div>
 
-          <div class="text-sm mt-1 text-gray-700 font-bold">
-            開始日：{{ formatDate(r.startDate) }}　
-            使用：{{ r.useDays }} 天　
-          </div>
+          <!-- 改成兩行資訊、可換行，避免溢出 -->
+          <div class="mt-2 text-sm font-bold text-gray-700 leading-relaxed space-y-1">
+            <div class="flex flex-wrap gap-x-4 gap-y-1">
+              <span class="whitespace-nowrap">開始日：{{ formatDate(r.startDate) }}</span>
+              <span class="whitespace-nowrap">使用：{{ r.useDays }} 天</span>
+            </div>
 
-          <div class="text-sm mt-1 text-gray-700 font-bold">
-            到期日：{{ formatDate(r.dueDate) }}
-            <span class="ml-2 text-xs font-black px-2 py-1 rounded-full" :class="badgeClass(r)">
-              {{ badgeText(r) }}
-            </span>
-          </div>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="whitespace-nowrap">到期日：{{ formatDate(r.dueDate) }}</span>
+              <span class="text-xs font-black px-2 py-1 rounded-full" :class="badgeClass(r)">
+                {{ badgeText(r) }}
+              </span>
+            </div>
 
-          <div class="text-sm text-gray-500 mt-1">
-            剩餘：<b>{{ daysLeft(r) }}</b> 天
+            <div class="text-gray-500 font-bold">
+              剩餘：<b class="text-gray-700">{{ daysLeft(r) }}</b> 天
+            </div>
           </div>
         </div>
 
@@ -140,6 +143,11 @@ createApp({
     const sortBy = ref('dueAsc');
 
     const draft = ref({ title: '', startDate: '', useDays: 14 });
+
+    // 用於控制「啟用通知」是否顯示
+    const isStandalone = ref(false);
+    const pushSupported = ref(false);
+    const notificationGranted = ref(false);
 
     const today0 = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
     const toDate0 = (s) => { const d=new Date(s); d.setHours(0,0,0,0); return d; };
@@ -194,6 +202,14 @@ createApp({
       return list;
     });
 
+    // 已啟用（= 不需要顯示按鈕）的判斷：
+    // iOS 上只要 permission 已 granted，且在主畫面模式，且瀏覽器支援即可。
+    const showEnablePush = computed(() => {
+      if (!pushSupported.value) return false; // 不支援就不顯示
+      if (!isStandalone.value) return true;  // 不是主畫面，顯示提示按鈕
+      return !notificationGranted.value;     // 主畫面但未允許 → 顯示；已允許 → 隱藏
+    });
+
     async function refresh() {
       const res = await fetch('/.netlify/functions/listReminders', { cache:'no-store' });
       const text = await res.text();
@@ -222,16 +238,11 @@ createApp({
         });
 
         const text = await res.text();
-        if (!res.ok) {
-          console.error('addReminder failed:', res.status, text);
-          alert(`新增失敗：${res.status}\n${text}`);
-          return;
-        }
+        if (!res.ok) return alert(`新增失敗：${res.status}\n${text}`);
 
         draft.value = { title:'', startDate:'', useDays:14 };
         await refresh();
       } catch (e) {
-        console.error(e);
         alert(`新增失敗：${String(e)}`);
       }
     }
@@ -260,6 +271,7 @@ createApp({
         alert('請先「加入主畫面」，並從主畫面圖示打開，再啟用通知');
         return;
       }
+
       if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
         alert('此環境不支援推播（請確認已加入主畫面，且網站為 HTTPS）');
         return;
@@ -275,6 +287,7 @@ createApp({
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
         alert('你沒有允許通知，無法啟用');
+        notificationGranted.value = false;
         return;
       }
 
@@ -290,11 +303,9 @@ createApp({
       });
 
       const saveText = await saveRes.text();
-      if (!saveRes.ok) {
-        alert(`訂閱保存失敗：${saveRes.status}\n${saveText}`);
-        return;
-      }
+      if (!saveRes.ok) return alert(`訂閱保存失敗：${saveRes.status}\n${saveText}`);
 
+      notificationGranted.value = true;
       alert('通知已啟用 ✅');
     }
 
@@ -305,10 +316,23 @@ createApp({
     }
 
     onMounted(async () => {
+      isStandalone.value =
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true;
+
+      pushSupported.value =
+        ('serviceWorker' in navigator) &&
+        ('PushManager' in window) &&
+        ('Notification' in window);
+
+      notificationGranted.value =
+        ('Notification' in window) && (Notification.permission === 'granted');
+
       // 預先註冊 SW（讓 iOS 比較穩）
       if ('serviceWorker' in navigator) {
         try { await navigator.serviceWorker.register('/sw.js'); } catch {}
       }
+
       try { await refresh(); } catch (e) { console.error(e); }
     });
 
@@ -316,6 +340,7 @@ createApp({
       reminders, keyword, sortBy, draft,
       previewDueDate,
       filtered,
+      showEnablePush,
       enablePush,
       addReminder, refresh, del, resetAll,
       formatDate, daysLeft, badgeText, badgeClass, cardClass
