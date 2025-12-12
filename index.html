@@ -26,41 +26,15 @@
       <button @click="resetAll" class="px-4 py-2 rounded-xl bg-gray-200 font-bold">清空全部</button>
     </div>
 
-    <!-- Push / PWA 狀態 -->
-    <div class="rounded-2xl border p-4 mb-6 bg-pink-50">
-      <div class="flex flex-wrap items-center gap-2 justify-between">
-        <div class="font-bold text-gray-800">
-          推播狀態：
-          <span :class="pushEnabled ? 'text-emerald-700' : 'text-red-600'">
-            {{ pushEnabled ? '已啟用 ✅' : '未啟用 ❌' }}
-          </span>
-        </div>
-        <button @click="enablePush"
-          class="px-4 py-2 rounded-xl font-black"
-          :class="pushEnabled ? 'bg-emerald-200' : 'bg-pink-600 text-white'">
-          {{ pushEnabled ? '重新檢查' : '啟用推播' }}
-        </button>
-      </div>
-
-      <div class="text-xs text-gray-700 mt-2">
-        目前模式：
-        <b :class="isStandalone ? 'text-emerald-700' : 'text-red-600'">
-          {{ isStandalone ? '主畫面App（standalone）✅' : '瀏覽器分頁/內建瀏覽器 ❌' }}
-        </b>
-      </div>
-
-      <p class="text-xs text-gray-600 mt-2 leading-relaxed">
-        iPhone：請用 Safari 開啟 Netlify 網址 → 分享 →「加入主畫面」→ 從主畫面點圖示開 → 再按「啟用推播」。
-      </p>
-
-      <!-- 診斷面板 -->
-      <div class="mt-3 text-xs font-mono bg-white/70 border rounded-xl p-3 whitespace-pre-wrap">
-{{ debugText }}
-      </div>
-      <button @click="runDebug"
-        class="mt-2 w-full px-4 py-2 rounded-xl bg-white border font-bold">
-        重新診斷推播/後端
+    <!-- 推播：不顯示狀態，只保留按鈕 -->
+    <div class="mb-6">
+      <button @click="enablePush"
+        class="w-full px-4 py-3 rounded-2xl font-black bg-pink-600 text-white">
+        啟用通知
       </button>
+      <p class="text-xs text-gray-500 mt-2 leading-relaxed">
+        小提醒：若你要啟用通知，請先用 Safari 打開網站 → 分享 →「加入主畫面」→ 從主畫面圖示開啟後再按此按鈕。
+      </p>
     </div>
 
     <!-- 新增提醒：開始使用日期 + 使用天數 -->
@@ -69,7 +43,7 @@
         <div class="md:col-span-2">
           <label class="block text-sm font-bold mb-1">提醒名稱</label>
           <input v-model.trim="draft.title" class="w-full border rounded-xl p-3"
-                 placeholder="                   " />
+                 placeholder="例如：隱形眼鏡 / 濾芯 / 保養" />
         </div>
 
         <div class="md:col-span-2">
@@ -98,10 +72,6 @@
           重新整理清單
         </button>
       </div>
-
-      <p class="text-xs text-gray-600 mt-3 leading-relaxed">
-        
-      </p>
     </div>
 
     <!-- 清單 -->
@@ -171,11 +141,6 @@ createApp({
 
     const draft = ref({ title: '', startDate: '', useDays: 14 });
 
-    const pushEnabled = ref(false);
-    const isStandalone = ref(false);
-
-    const debugText = ref('尚未診斷');
-
     const today0 = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
     const toDate0 = (s) => { const d=new Date(s); d.setHours(0,0,0,0); return d; };
 
@@ -194,14 +159,13 @@ createApp({
     });
 
     const formatDate = (s) => s ? new Date(s).toLocaleDateString('zh-TW') : '';
-
     const daysLeft = (r) => Math.ceil((toDate0(r.dueDate) - today0()) / 86400000);
 
     const status = (r) => {
       const dl = daysLeft(r);
       if (dl < 0) return 'overdue';
       if (dl === 0) return 'due';
-      if (dl <= 2) return 'soon';   // 到期前 2 天算快到了（可自行調整）
+      if (dl <= 2) return 'soon';
       return 'ok';
     };
 
@@ -288,23 +252,16 @@ createApp({
     }
 
     async function enablePush() {
-      // 先嚴格要求：主畫面模式
       const standalone =
         window.matchMedia('(display-mode: standalone)').matches ||
         window.navigator.standalone === true;
 
       if (!standalone) {
-        alert('請先「加入主畫面」，並從主畫面圖示打開，再啟用推播');
+        alert('請先「加入主畫面」，並從主畫面圖示打開，再啟用通知');
         return;
       }
-
-      if (!('serviceWorker' in navigator)) {
-        alert('此環境沒有 Service Worker（請確認 HTTPS 且 sw.js 可讀）');
-        return;
-      }
-
-      if (!('PushManager' in window)) {
-        alert('目前環境沒有 PushManager（iOS 有時需刪除主畫面 App 後重裝）');
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        alert('此環境不支援推播（請確認已加入主畫面，且網站為 HTTPS）');
         return;
       }
 
@@ -312,13 +269,12 @@ createApp({
 
       const keyRes = await fetch('/.netlify/functions/vapidPublicKey', { cache:'no-store' });
       const keyText = await keyRes.text();
-      if (!keyRes.ok) return alert(`取得 VAPID key 失敗：${keyRes.status}\n${keyText}`);
+      if (!keyRes.ok) return alert(`取得推播金鑰失敗：${keyRes.status}\n${keyText}`);
       const { publicKey } = JSON.parse(keyText);
 
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
-        alert('你沒有允許通知，無法推播');
-        pushEnabled.value = false;
+        alert('你沒有允許通知，無法啟用');
         return;
       }
 
@@ -336,13 +292,10 @@ createApp({
       const saveText = await saveRes.text();
       if (!saveRes.ok) {
         alert(`訂閱保存失敗：${saveRes.status}\n${saveText}`);
-        pushEnabled.value = false;
         return;
       }
 
-      pushEnabled.value = true;
-      alert('推播已啟用 ✅');
-      await runDebug();
+      alert('通知已啟用 ✅');
     }
 
     async function resetAll() {
@@ -351,86 +304,24 @@ createApp({
       await refresh();
     }
 
-    async function runDebug() {
-      const standalone =
-        window.matchMedia('(display-mode: standalone)').matches ||
-        window.navigator.standalone === true;
-
-      let swRegOk = false;
-      let swScope = '';
-      let swErr = '';
-
-      try {
-        const reg = await navigator.serviceWorker.getRegistration('/');
-        if (reg) { swRegOk = true; swScope = reg.scope || ''; }
-      } catch (e) {
-        swErr = String(e);
-      }
-
-      let swFetch = '';
-      try {
-        const r = await fetch('/sw.js', { cache: 'no-store' });
-        swFetch = `${r.status} ${r.ok ? 'OK' : 'FAIL'}`;
-      } catch (e) {
-        swFetch = `FETCH_ERR ${String(e)}`;
-      }
-
-      let fnFetch = '';
-      try {
-        const r = await fetch('/.netlify/functions/vapidPublicKey', { cache: 'no-store' });
-        fnFetch = `${r.status} ${r.ok ? 'OK' : 'FAIL'}`;
-      } catch (e) {
-        fnFetch = `FETCH_ERR ${String(e)}`;
-      }
-
-      debugText.value =
-        `standalone: ${standalone}\n` +
-        `serviceWorker in navigator: ${'serviceWorker' in navigator}\n` +
-        `PushManager in window: ${'PushManager' in window}\n` +
-        `Notification in window: ${'Notification' in window}\n` +
-        `Notification.permission: ${('Notification' in window) ? Notification.permission : 'N/A'}\n` +
-        `SW registration: ${swRegOk}  scope: ${swScope}\n` +
-        `GET /sw.js: ${swFetch}\n` +
-        `GET /.netlify/functions/vapidPublicKey: ${fnFetch}\n` +
-        (swErr ? `SW error: ${swErr}\n` : '');
-    }
-
     onMounted(async () => {
-      isStandalone.value =
-        window.matchMedia('(display-mode: standalone)').matches ||
-        window.navigator.standalone === true;
-
       // 預先註冊 SW（讓 iOS 比較穩）
       if ('serviceWorker' in navigator) {
         try { await navigator.serviceWorker.register('/sw.js'); } catch {}
       }
-
-      // 初始狀態
-      pushEnabled.value =
-        ('serviceWorker' in navigator) &&
-        ('PushManager' in window) &&
-        ('Notification' in window) &&
-        (Notification.permission === 'granted') &&
-        isStandalone.value;
-
       try { await refresh(); } catch (e) { console.error(e); }
-      await runDebug();
     });
 
     return {
       reminders, keyword, sortBy, draft,
       previewDueDate,
       filtered,
-      pushEnabled,
-      isStandalone,
       enablePush,
       addReminder, refresh, del, resetAll,
-      formatDate, daysLeft, badgeText, badgeClass, cardClass,
-      debugText, runDebug
+      formatDate, daysLeft, badgeText, badgeClass, cardClass
     };
   }
 }).mount('#app');
 </script>
 </body>
 </html>
-
