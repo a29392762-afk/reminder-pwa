@@ -48,7 +48,15 @@
 
         <div class="md:col-span-2">
           <label class="block text-sm font-bold mb-1">開始使用日期</label>
-          <input type="date" v-model="draft.startDate" class="w-full border rounded-xl p-3" />
+          <input
+            type="text"
+            v-model.trim="draft.startDate"
+            inputmode="numeric"
+            placeholder="YYYY-MM-DD"
+            class="w-full border rounded-xl p-3"
+            pattern="\\d{4}-\\d{2}-\\d{2}"
+          />
+
         </div>
 
         <div class="md:col-span-2">
@@ -226,7 +234,11 @@ createApp({
     async function addReminder() {
       try {
         if (!draft.value.title) return alert('請輸入提醒名稱');
-        if (!draft.value.startDate) return alert('請選開始使用日期');
+        if (!draft.value.startDate) return alert('請輸入開始使用日期');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.value.startDate)) {
+          return alert('日期格式請用 YYYY-MM-DD，例如 2025-12-17');
+        }
+
         if (!draft.value.useDays || Number(draft.value.useDays) <= 0) return alert('使用天數至少 1 天');
 
         const dueDate = addDaysToYMD(draft.value.startDate, draft.value.useDays);
