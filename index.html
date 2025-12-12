@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>多功能提醒</title>
+
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#EC4899" />
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;700&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Rubik','Noto Sans TC',sans-serif; background:#E8E0D5; }
+  </style>
+</head>
+
+<body class="min-h-screen flex items-center justify-center p-4">
+<div id="app" class="w-full max-w-2xl">
+  <div class="bg-white rounded-3xl shadow-2xl p-6">
+
+    <div class="flex items-center justify-between gap-3 mb-4">
+      <h1 class="text-3xl font-black text-pink-600">🔔 多功能提醒</h1>
+      <button @click="resetAll" class="px-4 py-2 rounded-xl bg-gray-200 font-bold">清空全部</button>
+    </div>
+
+    <!-- Push / PWA 狀態 -->
+    <div class="rounded-2xl border p-4 mb-6 bg-pink-50">
+      <div class="flex flex-wrap items-center gap-2 justify-between">
+        <div class="font-bold text-gray-800">
+          推播狀態：
+          <span :class="pushEnabled ? 'text-emerald-700' : 'text-red-600'">
+            {{ pushEnabled ? '已啟用 ✅' : '未啟用 ❌' }}
+          </span>
+        </div>
+        <button @click="enablePush"
+          class="px-4 py-2 rounded-xl font-black"
+          :class="pushEnabled ? 'bg-emerald-200' : 'bg-pink-600 text-white'">
+          {{ pushEnabled ? '重新檢查' : '啟用推播' }}
+        </button>
+      </div>
+
+      <div class="text-xs text-gray-700 mt-2">
+        目前模式：
+        <b :class="isStandalone ? 'text-emerald-700' : 'text-red-600'">
+          {{ isStandalone ? '主畫面App（standalone）✅' : '瀏覽器分頁/內建瀏覽器 ❌' }}
+        </b>
+      </div>
+
+      <p class="text-xs text-gray-600 mt-2 leading-relaxed">
+        iPhone：請用 Safari 開啟 Netlify 網址 → 分享 →「加入主畫面」→ 從主畫面點圖示開 → 再按「啟用推播」。
+      </p>
+
+      <!-- 診斷面板 -->
+      <div class="mt-3 text-xs font-mono bg-white/70 border rounded-xl p-3 whitespace-pre-wrap">
+{{ debugText }}
+      </div>
+      <button @click="runDebug"
+        class="mt-2 w-full px-4 py-2 rounded-xl bg-white border font-bold">
+        重新診斷推播/後端
+      </button>
+    </div>
+
+    <!-- 新增提醒：開始使用日期 + 使用天數 -->
+    <div class="bg-white rounded-2xl border p-4 mb-6">
+      <div class="grid md:grid-cols-6 gap-3">
+        <div class="md:col-span-2">
+          <label class="block text-sm font-bold mb-1">提醒名稱</label>
+          <input v-model.trim="draft.title" class="w-full border rounded-xl p-3"
+                 placeholder="例如：隱形眼鏡 / 濾芯 / 保養" />
+        </div>
+
+        <div class="md:col-span-2">
+          <label class="block text-sm font-bold mb-1">開始使用日期</label>
+          <input type="date" v-model="draft.startDate" class="w-full border rounded-xl p-3" />
+        </div>
+
+        <div class="md:col-span-2">
+          <label class="block text-sm font-bold mb-1">使用天數</label>
+          <input type="number" min="1" v-model.number="draft.useDays" class="w-full border rounded-xl p-3" />
+        </div>
+      </div>
+
+      <div class="mt-4 rounded-xl bg-gray-50 border p-3 text-sm text-gray-700 font-bold"
+           v-if="draft.startDate && draft.useDays">
+        預計到期日：<span class="text-pink-600 font-black text-base">{{ previewDueDate }}</span>
+      </div>
+
+      <div class="flex gap-3 mt-4">
+        <button @click="addReminder"
+          class="flex-1 bg-pink-600 text-white font-black rounded-xl py-3">
+          ＋ 新增提醒
+        </button>
+        <button @click="refresh"
+          class="flex-1 bg-gray-200 font-bold rounded-xl py-3">
+          重新整理清單
+        </button>
+      </div>
+
+      <p class="text-xs text-gray-600 mt-3 leading-relaxed">
+        推播規則：由伺服器排程檢查，快到/到期/逾期會推播。到期或逾期推播後會自動刪除。
+      </p>
+    </div>
+
+    <!-- 清單 -->
+    <div class="flex items-center gap-2 mb-3">
+      <input v-model.trim="keyword" placeholder="搜尋…" class="flex-1 border rounded-xl p-3" />
+      <select v-model="sortBy" class="border rounded-xl p-3 font-bold">
+        <option value="dueAsc">到期日：近 → 遠</option>
+        <option value="dueDesc">到期日：遠 → 近</option>
+      </select>
+    </div>
+
+    <div v-if="filtered.length === 0" class="text-center text-gray-500 font-bold py-10">
+      目前沒有提醒 🙂
+    </div>
+
+    <div class="space-y-3">
+      <div v-for="r in filtered" :key="r.id"
+        class="rounded-2xl border p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+        :class="cardClass(r)">
+
+        <div class="flex-1">
+          <div class="text-lg font-black text-gray-800">{{ r.title }}</div>
+
+          <div class="text-sm mt-1 text-gray-700 font-bold">
+            開始日：{{ formatDate(r.startDate) }}　
+            使用：{{ r.useDays }} 天　
+          </div>
+
+          <div class="text-sm mt-1 text-gray-700 font-bold">
+            到期日：{{ formatDate(r.dueDate) }}
+            <span class="ml-2 text-xs font-black px-2 py-1 rounded-full" :class="badgeClass(r)">
+              {{ badgeText(r) }}
+            </span>
+          </div>
+
+          <div class="text-sm text-gray-500 mt-1">
+            剩餘：<b>{{ daysLeft(r) }}</b> 天
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <button @click="del(r.id)" class="px-4 py-2 rounded-xl bg-gray-200 font-bold">刪除</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+createApp({
+  setup() {
+    const reminders = ref([]);
+    const keyword = ref('');
+    const sortBy = ref('dueAsc');
+
+    const draft = ref({ title: '', startDate: '', useDays: 14 });
+
+    const pushEnabled = ref(false);
+    const isStandalone = ref(false);
+
+    const debugText = ref('尚未診斷');
+
+    const today0 = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
+    const toDate0 = (s) => { const d=new Date(s); d.setHours(0,0,0,0); return d; };
+
+    const addDaysToYMD = (ymd, days) => {
+      const d = toDate0(ymd);
+      d.setDate(d.getDate() + Number(days));
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      const dd = String(d.getDate()).padStart(2,'0');
+      return `${yyyy}-${mm}-${dd}`;
+    };
+
+    const previewDueDate = computed(() => {
+      if (!draft.value.startDate || !draft.value.useDays) return '';
+      return addDaysToYMD(draft.value.startDate, draft.value.useDays);
+    });
+
+    const formatDate = (s) => s ? new Date(s).toLocaleDateString('zh-TW') : '';
+
+    const daysLeft = (r) => Math.ceil((toDate0(r.dueDate) - today0()) / 86400000);
+
+    const status = (r) => {
+      const dl = daysLeft(r);
+      if (dl < 0) return 'overdue';
+      if (dl === 0) return 'due';
+      if (dl <= 2) return 'soon';   // 到期前 2 天算快到了（可自行調整）
+      return 'ok';
+    };
+
+    const badgeText = (r) => ({ overdue:'已逾期', due:'今天到期', soon:'快到了', ok:'正常' }[status(r)]);
+    const badgeClass = (r) => ({
+      overdue:'bg-red-600 text-white',
+      due:'bg-red-500 text-white',
+      soon:'bg-amber-400 text-stone-900',
+      ok:'bg-emerald-200 text-emerald-800'
+    }[status(r)]);
+    const cardClass = (r) => ({
+      overdue:'border-red-200 bg-red-50',
+      due:'border-red-200 bg-red-50',
+      soon:'border-amber-200 bg-amber-50',
+      ok:'border-gray-200 bg-white'
+    }[status(r)]);
+
+    const filtered = computed(() => {
+      let list = [...reminders.value];
+      if (keyword.value) {
+        const k = keyword.value.toLowerCase();
+        list = list.filter(r => (r.title||'').toLowerCase().includes(k));
+      }
+      const byDue = (a,b) => toDate0(a.dueDate) - toDate0(b.dueDate);
+      list.sort(sortBy.value === 'dueAsc' ? byDue : (a,b)=>-byDue(a,b));
+      return list;
+    });
+
+    async function refresh() {
+      const res = await fetch('/.netlify/functions/listReminders', { cache:'no-store' });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`listReminders ${res.status}: ${text}`);
+      const data = JSON.parse(text);
+      reminders.value = data.reminders || [];
+    }
+
+    async function addReminder() {
+      try {
+        if (!draft.value.title) return alert('請輸入提醒名稱');
+        if (!draft.value.startDate) return alert('請選開始使用日期');
+        if (!draft.value.useDays || Number(draft.value.useDays) <= 0) return alert('使用天數至少 1 天');
+
+        const dueDate = addDaysToYMD(draft.value.startDate, draft.value.useDays);
+
+        const res = await fetch('/.netlify/functions/addReminder', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            title: draft.value.title,
+            startDate: draft.value.startDate,
+            useDays: Number(draft.value.useDays),
+            dueDate
+          })
+        });
+
+        const text = await res.text();
+        if (!res.ok) {
+          console.error('addReminder failed:', res.status, text);
+          alert(`新增失敗：${res.status}\n${text}`);
+          return;
+        }
+
+        draft.value = { title:'', startDate:'', useDays:14 };
+        await refresh();
+      } catch (e) {
+        console.error(e);
+        alert(`新增失敗：${String(e)}`);
+      }
+    }
+
+    async function del(id) {
+      try {
+        const res = await fetch('/.netlify/functions/deleteReminder', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ id })
+        });
+        const text = await res.text();
+        if (!res.ok) return alert(`刪除失敗：${res.status}\n${text}`);
+        await refresh();
+      } catch (e) {
+        alert(`刪除失敗：${String(e)}`);
+      }
+    }
+
+    async function enablePush() {
+      // 先嚴格要求：主畫面模式
+      const standalone =
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true;
+
+      if (!standalone) {
+        alert('請先「加入主畫面」，並從主畫面圖示打開，再啟用推播');
+        return;
+      }
+
+      if (!('serviceWorker' in navigator)) {
+        alert('此環境沒有 Service Worker（請確認 HTTPS 且 sw.js 可讀）');
+        return;
+      }
+
+      if (!('PushManager' in window)) {
+        alert('目前環境沒有 PushManager（iOS 有時需刪除主畫面 App 後重裝）');
+        return;
+      }
+
+      const reg = await navigator.serviceWorker.register('/sw.js');
+
+      const keyRes = await fetch('/.netlify/functions/vapidPublicKey', { cache:'no-store' });
+      const keyText = await keyRes.text();
+      if (!keyRes.ok) return alert(`取得 VAPID key 失敗：${keyRes.status}\n${keyText}`);
+      const { publicKey } = JSON.parse(keyText);
+
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        alert('你沒有允許通知，無法推播');
+        pushEnabled.value = false;
+        return;
+      }
+
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+
+      const saveRes = await fetch('/.netlify/functions/subscribe', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(sub)
+      });
+
+      const saveText = await saveRes.text();
+      if (!saveRes.ok) {
+        alert(`訂閱保存失敗：${saveRes.status}\n${saveText}`);
+        pushEnabled.value = false;
+        return;
+      }
+
+      pushEnabled.value = true;
+      alert('推播已啟用 ✅');
+      await runDebug();
+    }
+
+    async function resetAll() {
+      if (!confirm('確定清空全部提醒？（伺服器端也會清空）')) return;
+      for (const r of reminders.value) await del(r.id);
+      await refresh();
+    }
+
+    async function runDebug() {
+      const standalone =
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true;
+
+      let swRegOk = false;
+      let swScope = '';
+      let swErr = '';
+
+      try {
+        const reg = await navigator.serviceWorker.getRegistration('/');
+        if (reg) { swRegOk = true; swScope = reg.scope || ''; }
+      } catch (e) {
+        swErr = String(e);
+      }
+
+      let swFetch = '';
+      try {
+        const r = await fetch('/sw.js', { cache: 'no-store' });
+        swFetch = `${r.status} ${r.ok ? 'OK' : 'FAIL'}`;
+      } catch (e) {
+        swFetch = `FETCH_ERR ${String(e)}`;
+      }
+
+      let fnFetch = '';
+      try {
+        const r = await fetch('/.netlify/functions/vapidPublicKey', { cache: 'no-store' });
+        fnFetch = `${r.status} ${r.ok ? 'OK' : 'FAIL'}`;
+      } catch (e) {
+        fnFetch = `FETCH_ERR ${String(e)}`;
+      }
+
+      debugText.value =
+        `standalone: ${standalone}\n` +
+        `serviceWorker in navigator: ${'serviceWorker' in navigator}\n` +
+        `PushManager in window: ${'PushManager' in window}\n` +
+        `Notification in window: ${'Notification' in window}\n` +
+        `Notification.permission: ${('Notification' in window) ? Notification.permission : 'N/A'}\n` +
+        `SW registration: ${swRegOk}  scope: ${swScope}\n` +
+        `GET /sw.js: ${swFetch}\n` +
+        `GET /.netlify/functions/vapidPublicKey: ${fnFetch}\n` +
+        (swErr ? `SW error: ${swErr}\n` : '');
+    }
+
+    onMounted(async () => {
+      isStandalone.value =
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true;
+
+      // 預先註冊 SW（讓 iOS 比較穩）
+      if ('serviceWorker' in navigator) {
+        try { await navigator.serviceWorker.register('/sw.js'); } catch {}
+      }
+
+      // 初始狀態
+      pushEnabled.value =
+        ('serviceWorker' in navigator) &&
+        ('PushManager' in window) &&
+        ('Notification' in window) &&
+        (Notification.permission === 'granted') &&
+        isStandalone.value;
+
+      try { await refresh(); } catch (e) { console.error(e); }
+      await runDebug();
+    });
+
+    return {
+      reminders, keyword, sortBy, draft,
+      previewDueDate,
+      filtered,
+      pushEnabled,
+      isStandalone,
+      enablePush,
+      addReminder, refresh, del, resetAll,
+      formatDate, daysLeft, badgeText, badgeClass, cardClass,
+      debugText, runDebug
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
