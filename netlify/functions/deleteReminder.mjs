@@ -1,15 +1,18 @@
 import { getStore } from "@netlify/blobs";
 
 export default async (req) => {
-  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
 
   const { id } = await req.json();
-  if (!id) return new Response("Bad Request: missing id", { status: 400 });
-
   const store = getStore("data");
-  const list = (await store.getJSON("reminders", { defaultValue: [] })) || [];
+
+  const raw = await store.get("reminders");
+  const list = raw ? JSON.parse(raw) : [];
+
   const next = list.filter(r => r.id !== id);
-  await store.setJSON("reminders", next);
+  await store.set("reminders", JSON.stringify(next));
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: { "Content-Type": "application/json" }
